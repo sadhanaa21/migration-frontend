@@ -44,33 +44,33 @@ SAP_API_USERNAME=demo
 SAP_API_PASSWORD=demo123
 ```
 
-Then run the core server on the port that worked on your machine. Example with `8010`:
+Then run the core server on port **18000** (this is the port configured for the SAP agent endpoint):
 
 ```powershell
 cd "C:\Users\Sadhana.Deshmukh\Desktop\AI agent\ai-agent"
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 18000 --reload
 ```
 
 Check:
 
 ```text
-http://127.0.0.1:8010/health
+http://127.0.0.1:18000/health
+http://127.0.0.1:18000/docs
 ```
 
 ### 3. React Frontend
 
-Create `.env.local`:
+The `.env` file is already configured. If you need to change the backend API URL, edit:
 
 ```powershell
 cd "C:\Users\Sadhana.Deshmukh\Desktop\AI agent\migration-frontend"
-Copy-Item .env.example .env.local
-notepad .env.local
+notepad .env
 ```
 
-Set the core API port:
+Verify the core API port matches your backend:
 
 ```env
-VITE_CORE_API_URL=http://127.0.0.1:8010
+VITE_CORE_API_URL=http://127.0.0.1:18000
 ```
 
 Install and run:
@@ -88,13 +88,53 @@ http://127.0.0.1:5173
 
 ## UI Flow
 
-1. Welcome page
-2. Source system selection and SAP credentials
-3. Cloud provider selection
-4. Destination warehouse and credentials
-5. Review and connection checks
-6. AI scan with chatbot-style prompts
-7. Approval and upload action
+The frontend features an intelligent, conversational chatbot that guides you through the migration setup:
+
+### Enhanced Conversational Experience
+
+1. **Intelligent Onboarding**: The chatbot greets you with a friendly welcome and explains the migration process step-by-step.
+
+2. **Contextual Help System**: 
+   - When asked for credentials or connection details, the chatbot detects if you need help
+   - Offers detailed guidance on finding SAP URLs, client IDs, Azure storage details, etc.
+   - Provides multiple help levels: quick overview, detailed step-by-step, and advanced guidance
+
+3. **Three-Step Configuration**:
+   - **Source**: Choose your SAP system (S/4HANA, ECC, Oracle, or Custom)
+   - **Cloud**: Select your cloud provider (Azure, AWS, or GCP)
+   - **Destination**: Pick the landing service (Azure Blob, ADLS Gen2, Synapse, or Databricks)
+
+4. **Smart Assistance**:
+   - "I need help finding these details" - Get step-by-step guidance
+   - "I have the details" - Skip help and proceed
+   - "Use demo/default" - Quick setup for testing
+
+5. **Real-time Guidance**:
+   - **Finding SAP Base URL**: Multiple methods including SAP GUI, Basis team contacts, IT documentation
+   - **Azure Storage Setup**: Portal walkthrough, access key retrieval, container creation
+   - **Connection Strings**: Security best practices and credential management tips
+
+6. **SAP Agent Integration**:
+   - Calls the backend SAP agent at `http://127.0.0.1:18000/v1/sap/run`
+   - Natural language request processing
+   - Approval-gated operations for data migration
+   - Real-time status updates in chat
+
+### Traditional Features
+
+- Collapsible AWS Glue-style catalog rail showing scanned tables
+- Table selection with confidence scores and row estimates
+- Output format selection (Parquet, JSON, CSV)
+- Backend approval workflow with approve/reject actions
+- Persistent chat history throughout the session
+
+### Key Improvements
+
+- **More human-like interactions**: The chatbot uses friendly, encouraging language
+- **Proactive help**: Offers assistance before users get stuck
+- **Educational content**: Teaches users where to find credentials and how systems connect
+- **Flexible paths**: Users can get help, use defaults, or provide custom details
+- **Security awareness**: Includes tips on credential management and best practices
 
 ## Backend Integration
 
@@ -105,4 +145,4 @@ The frontend proxies API calls through Vite:
 /api/v1/sap/run   -> CORE_API/v1/sap/run
 ```
 
-The AI scan table discovery is currently frontend-assisted using the dummy SAP API catalog and metadata candidates. The approval button calls the existing SAP agent endpoint and uses the backend approval flow.
+Table discovery is currently frontend-assisted using the dummy SAP API metadata candidates. The approval button calls the existing SAP agent endpoint and uses the backend approval flow.

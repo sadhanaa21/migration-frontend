@@ -5,5 +5,9 @@ __pycache__/
 node_modules/
 dist/
 logs/
+dev-server*.log
+*.tsbuildinfo
+vite.config.d.ts
+vite.config.js
 .DS_Store
 Thumbs.db

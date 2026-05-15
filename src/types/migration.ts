@@ -54,10 +54,42 @@ export interface SapAgentResponse {
   approval?: AgentApproval | null;
 }
 
+export type ChatActionKind =
+  | "show_source_options"
+  | "show_cloud_options"
+  | "show_destination_options"
+  | "select_source"
+  | "select_cloud"
+  | "select_destination"
+  | "show_source_help"
+  | "show_destination_help"
+  | "use_demo_source"
+  | "use_default_destination"
+  | "test_core"
+  | "run_scan"
+  | "request_approval"
+  | "resolve_approval"
+  | "set_format"
+  | "guide_source_url"
+  | "guide_source_credentials"
+  | "guide_destination_storage"
+  | "guide_destination_credentials"
+  | "need_help_with_this"
+  | "provide_source_details"
+  | "provide_destination_details";
+
+export interface ChatAction {
+  label: string;
+  kind: ChatActionKind;
+  value?: string;
+  tone?: "primary" | "secondary" | "danger";
+}
+
 export interface ChatMessage {
   id: string;
   role: "assistant" | "user";
   text: string;
+  actions?: ChatAction[];
 }
 
 export interface MigrationState {
