@@ -24,14 +24,17 @@ export async function checkCoreHealth(): Promise<boolean> {
 }
 
 export async function runSapAgent(payload: {
-  message?: string;
+  message: string;
   approval_id?: string;
   approve?: boolean;
 }): Promise<SapAgentResponse> {
-  const response = await fetch("/api/v1/sap/run", {
+  const response = await fetch("/api/v1/llm/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      domain: "sap",
+      ...payload,
+    }),
   });
 
   return readJson<SapAgentResponse>(response);
