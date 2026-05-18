@@ -1140,6 +1140,9 @@ export function App() {
 
     try {
       const response = await runSapAgent({
+        message: approve
+          ? "Approve the pending SAP write request."
+          : "Reject the pending SAP write request.",
         approval_id: state.approval.approval_id,
         approve,
       });

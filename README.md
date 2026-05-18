@@ -44,18 +44,18 @@ SAP_API_USERNAME=demo
 SAP_API_PASSWORD=demo123
 ```
 
-Then run the core server on port **18000** (this is the port configured for the SAP agent endpoint):
+Then run the core server on port **8000** (this is the port configured for the unified LLM endpoint):
 
 ```powershell
 cd "C:\Users\Sadhana.Deshmukh\Desktop\AI agent\ai-agent"
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 18000 --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Check:
 
 ```text
-http://127.0.0.1:18000/health
-http://127.0.0.1:18000/docs
+http://127.0.0.1:8000/health
+http://127.0.0.1:8000/docs
 ```
 
 ### 3. React Frontend
@@ -70,7 +70,7 @@ notepad .env
 Verify the core API port matches your backend:
 
 ```env
-VITE_CORE_API_URL=http://127.0.0.1:18000
+VITE_CORE_API_URL=http://127.0.0.1:8000
 ```
 
 Install and run:
@@ -115,7 +115,7 @@ The frontend features an intelligent, conversational chatbot that guides you thr
    - **Connection Strings**: Security best practices and credential management tips
 
 6. **SAP Agent Integration**:
-   - Calls the backend SAP agent at `http://127.0.0.1:18000/v1/sap/run`
+   - Calls the backend unified LLM endpoint at `http://127.0.0.1:8000/v1/llm/run` with SAP domain routing
    - Natural language request processing
    - Approval-gated operations for data migration
    - Real-time status updates in chat
@@ -142,7 +142,7 @@ The frontend proxies API calls through Vite:
 
 ```text
 /api/health       -> CORE_API/health
-/api/v1/sap/run   -> CORE_API/v1/sap/run
+/api/v1/llm/run   -> CORE_API/v1/llm/run
 ```
 
-Table discovery is currently frontend-assisted using the dummy SAP API metadata candidates. The approval button calls the existing SAP agent endpoint and uses the backend approval flow.
+Table discovery is currently frontend-assisted using the dummy SAP API metadata candidates. The approval button calls the unified LLM endpoint in SAP mode and uses the backend approval flow.
