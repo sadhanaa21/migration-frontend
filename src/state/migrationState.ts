@@ -4,7 +4,6 @@ export const initialMigrationState: MigrationState = {
   sourceSystem: "sap_s4",
   cloudProvider: "azure",
   destination: "azure_blob",
-  outputFormat: "parquet",
   sourceCredentials: {
     baseUrl: "http://127.0.0.1:8011",
     username: "demo",

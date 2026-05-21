@@ -100,20 +100,6 @@ export function DestinationPage({
           />
         </div>
 
-        <div className="format-row">
-          <span>Landing format</span>
-          {(["parquet", "json", "csv"] as const).map((format) => (
-            <button
-              className={state.outputFormat === format ? "selected-chip" : ""}
-              type="button"
-              key={format}
-              onClick={() => updateState({ outputFormat: format })}
-            >
-              {format.toUpperCase()}
-            </button>
-          ))}
-        </div>
-
         <PageActions back={goBack} next={goNext} />
       </div>
     </section>

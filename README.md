@@ -116,7 +116,8 @@ The frontend features an intelligent, conversational chatbot that guides you thr
 
 6. **SAP Agent Integration**:
    - Calls the backend unified LLM endpoint at `http://127.0.0.1:8000/v1/llm/run` with SAP domain routing
-   - Natural language request processing
+   - Natural language request processing for every typed chat request and setup action
+   - SAP table-list requests are routed to the LLM/backend agent instead of frontend-only metadata
    - Approval-gated operations for data migration
    - Real-time status updates in chat
 
@@ -124,7 +125,6 @@ The frontend features an intelligent, conversational chatbot that guides you thr
 
 - Collapsible AWS Glue-style catalog rail showing scanned tables
 - Table selection with confidence scores and row estimates
-- Output format selection (Parquet, JSON, CSV)
 - Backend approval workflow with approve/reject actions
 - Persistent chat history throughout the session
 
@@ -145,4 +145,4 @@ The frontend proxies API calls through Vite:
 /api/v1/llm/run   -> CORE_API/v1/llm/run
 ```
 
-Table discovery is currently frontend-assisted using the dummy SAP API metadata candidates. The approval button calls the unified LLM endpoint in SAP mode and uses the backend approval flow.
+Table discovery and approval requests are routed through the unified LLM endpoint in SAP mode and use the backend approval flow.

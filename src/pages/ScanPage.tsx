@@ -1,4 +1,4 @@
-import { scanSapCatalog } from "../api/catalog";
+import { runSapAgent } from "../api/client";
 import { ChatPanel } from "../components/ChatPanel";
 import { TableCatalog } from "../components/TableCatalog";
 import type { ChatMessage, SapTable } from "../types/migration";
@@ -18,26 +18,6 @@ export function ScanPage({
   selectedTables,
   onRequestApproval,
 }: ScanPageProps) {
-  function buildScanReply(prompt: string, tables: SapTable[]) {
-    const normalized = prompt.toLowerCase();
-    const selected = tables.filter((table) => table.selected);
-    const selectedNames = selected.map((table) => table.name).join(", ");
-
-    if (normalized.includes("sales")) {
-      return `I found sales migration candidates and selected ${selectedNames || "none"}. Sales order APIs are ready for approval-gated upload; ECC-style sales metadata is shown as a future candidate.`;
-    }
-
-    if (normalized.includes("product") || normalized.includes("material")) {
-      return `I focused on product and material data. I selected ${selectedNames || "none"} for the current runnable flow and kept metadata-only tables visible for planning.`;
-    }
-
-    if (normalized.includes("customer") || normalized.includes("partner")) {
-      return `I narrowed the catalog to customer and business partner data. I selected ${selectedNames || "none"} because it maps to the live dummy SAP API.`;
-    }
-
-    return `Full scan complete. I found ${tables.length} candidates across live SAP APIs and metadata. I selected ${selected.length} runnable API-backed tables for the first migration plan.`;
-  }
-
   async function runScan(prompt: string) {
     const userMessage: ChatMessage = {
       id: `${Date.now()}-user`,
@@ -48,20 +28,45 @@ export function ScanPage({
     updateState({
       chatMessages: [...state.chatMessages, userMessage],
     });
-    setNotice("AI scan is reading available SAP APIs and metadata candidates...");
+    setNotice("Asking the LLM for SAP table discovery...");
 
-    const tables = await scanSapCatalog(prompt);
-    const assistantMessage: ChatMessage = {
-      id: `${Date.now()}-assistant`,
-      role: "assistant",
-      text: buildScanReply(prompt, tables),
-    };
+    try {
+      const response = await runSapAgent({
+        message: [
+          "You are responding inside the migration frontend scan page.",
+          `Latest user prompt: ${prompt}`,
+          "If the prompt asks to list, inspect, fetch, scan, or migrate SAP data, use the SAP backend tools/agent.",
+          "Do not use frontend-only metadata. Do not ask for an output file format.",
+          "Return useful table/API names and the next migration step.",
+        ].join("\n\n"),
+      });
+      const assistantMessage: ChatMessage = {
+        id: `${Date.now()}-assistant`,
+        role: "assistant",
+        text: response.message || "The LLM completed the request without additional details.",
+      };
 
-    updateState({
-      scannedTables: tables,
-      chatMessages: [...state.chatMessages, userMessage, assistantMessage],
-    });
-    setNotice("Scan completed. Review and adjust selected tables.");
+      updateState({
+        approval: response.approval ?? state.approval,
+        lastAgentResponse: response,
+        chatMessages: [...state.chatMessages, userMessage, assistantMessage],
+      });
+      setNotice(response.status === "approval_required" ? "Approval request created." : "LLM response received.");
+    } catch (error) {
+      const assistantMessage: ChatMessage = {
+        id: `${Date.now()}-assistant`,
+        role: "assistant",
+        text:
+          error instanceof Error
+            ? `LLM request failed because ${error.message}`
+            : "LLM request failed. Check the API and try again.",
+      };
+
+      updateState({
+        chatMessages: [...state.chatMessages, userMessage, assistantMessage],
+      });
+      setNotice(error instanceof Error ? error.message : "Unable to reach the LLM.");
+    }
   }
 
   return (

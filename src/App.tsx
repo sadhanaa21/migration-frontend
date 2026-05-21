@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { scanSapCatalog } from "./api/catalog";
 import { checkCoreHealth, runSapAgent } from "./api/client";
 import { initialMigrationState } from "./state/migrationState";
 import type {
@@ -14,7 +13,6 @@ import type {
   CloudProvider,
   DestinationWarehouse,
   MigrationState,
-  OutputFormat,
   SapTable,
   SourceSystem,
 } from "./types/migration";
@@ -35,6 +33,14 @@ interface SetupOption<T extends string> {
   title: string;
   detail: string;
 }
+
+type LlmRouteOptions = {
+  assistantActions?: ChatAction[];
+  statePatch?: Partial<MigrationState>;
+  confirmedOverride?: ConfirmedSetup;
+  pendingUserText?: string;
+  notice?: string;
+};
 
 const sourceOptions: SetupOption<SourceSystem>[] = [
   {
@@ -110,8 +116,6 @@ const destinationOptions: SetupOption<DestinationWarehouse>[] = [
     detail: "Lakehouse ingestion target.",
   },
 ];
-
-const formatOptions: OutputFormat[] = ["parquet", "json", "csv"];
 
 const initialChatMessages: ChatMessage[] = [
   {
@@ -361,7 +365,13 @@ export function App() {
     }));
   }
 
-  function nextRequirement(nextConfirmed: ConfirmedSetup, prefix: string) {
+  function nextRequirement(
+    nextConfirmed: ConfirmedSetup,
+    prefix: string,
+    setupState: MigrationState = state,
+  ) {
+    const setupSelectedTables = setupState.scannedTables.filter((table) => table.selected);
+
     if (!nextConfirmed.source) {
       return `${prefix}\n\nRequired next: choose the source.`;
     }
@@ -382,22 +392,52 @@ export function App() {
       return `${prefix}\n\nRequired next: provide or confirm destination landing details.`;
     }
 
-    if (state.scannedTables.length === 0) {
+    if (setupState.scannedTables.length === 0) {
       return `${prefix}\n\nRequired next: review the captured migration setup.`;
     }
 
-    if (selectedTables.length === 0) {
+    if (setupSelectedTables.length === 0) {
       return `${prefix}\n\nRequired next: select at least one table for the migration plan.`;
     }
 
-    if (!state.approval) {
+    if (!setupState.approval) {
       return `${prefix}\n\nRequired next: request backend approval for the upload.`;
     }
 
     return `${prefix}\n\nRequired next: approve or reject the active backend request.`;
   }
 
+  async function sendChatActionToLlm(
+    userText: string,
+    prompt: string,
+    options: Omit<LlmRouteOptions, "pendingUserText"> = {},
+  ) {
+    if (options.confirmedOverride) {
+      setConfirmed(options.confirmedOverride);
+    }
+
+    setState((previous) => ({
+      ...previous,
+      ...options.statePatch,
+      chatMessages: [...previous.chatMessages, createMessage("user", userText)],
+    }));
+
+    await routePrompt(prompt, {
+      ...options,
+      pendingUserText: userText,
+    });
+  }
+
+  function shouldUseLlmRouting() {
+    return true;
+  }
+
   function showSourceOptions(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void showSourceOptionsWithLlm(echoUser);
+      return;
+    }
+
     appendMessages([
       ...(echoUser ? [{ role: "user" as const, text: "📦 Source System" }] : []),
       {
@@ -416,6 +456,11 @@ export function App() {
   }
 
   function showCloudOptions(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void showCloudOptionsWithLlm(echoUser);
+      return;
+    }
+
     appendMessages([
       ...(echoUser ? [{ role: "user" as const, text: "☁️ Cloud Provider" }] : []),
       {
@@ -430,13 +475,18 @@ export function App() {
   }
 
   function showDestinationOptions(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void showDestinationOptionsWithLlm(echoUser);
+      return;
+    }
+
     appendMessages([
       ...(echoUser ? [{ role: "user" as const, text: "🎯 Destination" }] : []),
       {
         role: "assistant",
         text:
           "Excellent! Now let's choose your destination service - the specific storage location where your data will land.\n\n" +
-          "I'll then help you configure container names, folder paths, credentials, and output formats. " +
+          "I'll then help you configure container names, folder paths, and credentials. " +
           "Don't worry if you're unsure about any of these - I can guide you through each step!",
         actions: [
           ...optionActions(destinationOptions, "select_destination"),
@@ -494,6 +544,11 @@ export function App() {
   }
 
   function selectSource(sourceSystem: SourceSystem, echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void selectSourceWithLlm(sourceSystem, echoUser);
+      return;
+    }
+
     const optionTitle = getOptionTitle(sourceOptions, sourceSystem);
     const nextConfirmed = { ...confirmed, source: true };
     const actions: ChatAction[] = [
@@ -519,6 +574,11 @@ export function App() {
   }
 
   function showSourceHelp(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void showSourceHelpWithLlm(echoUser);
+      return;
+    }
+
     appendMessages([
       ...(echoUser ? [{ role: "user" as const, text: "I need help finding these details" }] : []),
       {
@@ -554,6 +614,11 @@ export function App() {
   }
 
   function selectCloud(cloudProvider: CloudProvider, echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void selectCloudWithLlm(cloudProvider, echoUser);
+      return;
+    }
+
     const optionTitle = getOptionTitle(cloudOptions, cloudProvider);
     const nextConfirmed = { ...confirmed, cloud: true };
     const entries: ChatEntry[] = [];
@@ -594,7 +659,6 @@ export function App() {
       "- Container, bucket, or workspace name",
       "- Landing folder/path",
       "- Connection string, key, service principal, or managed identity",
-      "- Output format",
       "- Approval owner for the write operation",
       "",
       "If you do not know these, choose the help option and I will show the steps.",
@@ -602,6 +666,11 @@ export function App() {
   }
 
   function selectDestination(destination: DestinationWarehouse, echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void selectDestinationWithLlm(destination, echoUser);
+      return;
+    }
+
     const optionTitle = getOptionTitle(destinationOptions, destination);
     const nextConfirmed = { ...confirmed, destination: true };
     const entries: ChatEntry[] = [];
@@ -626,6 +695,11 @@ export function App() {
   }
 
   function showDestinationHelp(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void showDestinationHelpWithLlm(echoUser);
+      return;
+    }
+
     const cloud = getOptionTitle(cloudOptions, state.cloudProvider);
     const destTitle = getOptionTitle(destinationOptions, state.destination);
 
@@ -671,6 +745,11 @@ export function App() {
   }
 
   function handleNeedHelp(topic: "source" | "destination", echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void handleNeedHelpWithLlm(topic, echoUser);
+      return;
+    }
+
     if (topic === "source") {
       showSourceHelp(echoUser);
     } else {
@@ -679,6 +758,11 @@ export function App() {
   }
 
   function guideSourceUrl(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void guideSourceUrlWithLlm(echoUser);
+      return;
+    }
+
     appendMessages([
       ...(echoUser ? [{ role: "user" as const, text: "More help with finding the URL" }] : []),
       {
@@ -720,6 +804,11 @@ export function App() {
   }
 
   function guideDestinationStorage(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void guideDestinationStorageWithLlm(echoUser);
+      return;
+    }
+
     const cloud = getOptionTitle(cloudOptions, state.cloudProvider);
     
     appendMessages([
@@ -773,6 +862,11 @@ export function App() {
   }
 
   function provideSourceDetails(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void provideSourceDetailsWithLlm(echoUser);
+      return;
+    }
+
     const nextConfirmed = { ...confirmed, sourceConnection: true };
     appendMessages([
       ...(echoUser ? [{ role: "user" as const, text: "I have the source details ready" }] : []),
@@ -799,6 +893,11 @@ export function App() {
   }
 
   function provideDestinationDetails(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void provideDestinationDetailsWithLlm(echoUser);
+      return;
+    }
+
     const nextConfirmed = { ...confirmed, destinationConnection: true };
     appendMessages([
       ...(echoUser ? [{ role: "user" as const, text: "I have the destination details ready" }] : []),
@@ -811,12 +910,11 @@ export function App() {
           "• Container/bucket name",
           "• Landing folder path",
           "• Connection string or access credentials",
-          "• Output format preference (Parquet, JSON, CSV)",
           "",
           "For this demo, let's proceed with the migration setup. Ready to continue?",
         ].join("\n"),
         actions: [
-          { label: "Choose output format", kind: "set_format", value: "parquet", tone: "primary" },
+          { label: "Scan SAP tables", kind: "run_scan", tone: "primary" },
           { label: "Use default landing for testing", kind: "use_default_destination" },
         ],
       },
@@ -825,6 +923,11 @@ export function App() {
   }
 
   function useDemoSourceConnection(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void useDemoSourceConnectionWithLlm(echoUser);
+      return;
+    }
+
     const nextConfirmed = { ...confirmed, sourceConnection: true };
     const entries: ChatEntry[] = [];
 
@@ -865,6 +968,11 @@ export function App() {
   }
 
   function useDefaultDestination(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      void useDefaultDestinationWithLlm(echoUser);
+      return;
+    }
+
     const nextConfirmed = { ...confirmed, destinationConnection: true };
     const entries: ChatEntry[] = [];
 
@@ -882,14 +990,9 @@ export function App() {
           "Saved details:",
           "- Container: sap-api",
           "- Landing folder: sap-s4",
-          "- Output format: PARQUET",
         ].join("\n"),
       ),
-      actions: [
-        { label: "PARQUET", kind: "set_format", value: "parquet" },
-        { label: "JSON", kind: "set_format", value: "json" },
-        { label: "CSV", kind: "set_format", value: "csv" },
-      ],
+      actions: [{ label: "Scan SAP tables", kind: "run_scan", tone: "primary" }],
     });
 
     setConfirmed(nextConfirmed);
@@ -900,33 +1003,18 @@ export function App() {
           containerName: "sap-api",
           landingFolder: "sap-s4",
         },
-        outputFormat: "parquet",
       },
       entries,
     );
     setNotice("Default destination landing settings saved.");
   }
 
-  function setOutputFormat(outputFormat: OutputFormat, echoUser = true) {
-    const entries: ChatEntry[] = [];
-
-    if (echoUser) {
-      entries.push({ role: "user", text: outputFormat.toUpperCase() });
+  async function testCoreApi(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      await testCoreApiWithLlm(echoUser);
+      return;
     }
 
-    entries.push({
-      role: "assistant",
-      text: nextRequirement(
-        confirmed,
-        `Received: ${outputFormat.toUpperCase()} is saved as the landing format.`,
-      ),
-    });
-
-    updateWithMessages({ outputFormat }, entries);
-    setNotice(`${outputFormat.toUpperCase()} selected as landing format.`);
-  }
-
-  async function testCoreApi(echoUser = true) {
     if (echoUser) {
       appendMessages([{ role: "user", text: "Test Core API" }]);
     }
@@ -948,68 +1036,8 @@ export function App() {
     setBusy(false);
   }
 
-  function buildScanReply(prompt: string, tables: SapTable[]) {
-    const normalized = prompt.toLowerCase();
-    const selected = tables.filter((table) => table.selected);
-    const selectedNames = selected.map((table) => table.name).join(", ");
-
-    if (normalized.includes("sales")) {
-      return `Received: I found sales migration candidates and selected ${selectedNames || "none"}.\n\nRequired next: review the catalog cards and request approval when the plan is right.`;
-    }
-
-    if (normalized.includes("product") || normalized.includes("material")) {
-      return `Received: I focused on product and material data and selected ${selectedNames || "none"}.\n\nRequired next: adjust table selections or request approval.`;
-    }
-
-    if (normalized.includes("customer") || normalized.includes("partner")) {
-      return `Received: I narrowed the catalog to customer and business partner data and selected ${selectedNames || "none"}.\n\nRequired next: confirm the table plan.`;
-    }
-
-    return `Received: full scan complete. I found ${tables.length} candidates and selected ${selected.length} runnable API-backed tables for the first migration plan.`;
-  }
-
   async function runScan(prompt = "Scan all available SAP tables", echoUser = true) {
-    const startEntries: ChatEntry[] = [];
-
-    if (echoUser) {
-      startEntries.push({ role: "user", text: prompt });
-    }
-
-    startEntries.push({
-      role: "assistant",
-      text: "Received: scan request. I am reading available APIs and metadata candidates.",
-    });
-    appendMessages(startEntries);
-    setBusy(true);
-    setNotice("Discovery is reading available APIs and metadata candidates...");
-
-    try {
-      const tables = await scanSapCatalog(prompt);
-      updateWithMessages(
-        { scannedTables: tables },
-        [
-          {
-            role: "assistant",
-            text: buildScanReply(prompt, tables),
-            actions: [{ label: "Request approval", kind: "request_approval", tone: "primary" }],
-          },
-        ],
-      );
-      setNotice("Scan completed. Review and adjust selected tables.");
-    } catch (error) {
-      appendMessages([
-        {
-          role: "assistant",
-          text:
-            error instanceof Error
-              ? `Received: scan failed because ${error.message}`
-              : "Received: scan failed. Try again.",
-        },
-      ]);
-      setNotice("Scan failed.");
-    } finally {
-      setBusy(false);
-    }
+    await runScanWithLlm(prompt, echoUser);
   }
 
   function toggleTable(table: SapTable) {
@@ -1040,20 +1068,23 @@ export function App() {
 
   function buildMigrationPrompt() {
     const tableNames = selectedTables.map((table) => table.name).join(", ");
-    const paths = selectedTables.map((table) => `${table.name} -> ${table.destinationPath}`).join("; ");
     const limit = selectedTables.length > 1 ? "top 10 records from each selected table" : "top 10 records";
     const cloud = getOptionTitle(cloudOptions, state.cloudProvider);
     const destination = getOptionTitle(destinationOptions, state.destination);
 
     return [
-      `Fetch ${limit} from ${getOptionTitle(sourceOptions, state.sourceSystem)} for these selected objects: ${tableNames}.`,
-      `Upload the fetched records to ${destination} on ${cloud} as ${state.outputFormat}.`,
-      `Use these destination paths: ${paths}.`,
+      `Prepare an approval-gated migration for ${limit} from ${getOptionTitle(sourceOptions, state.sourceSystem)} for these selected objects: ${tableNames}.`,
+      `Use ${destination} on ${cloud} with landing folder ${state.destinationCredentials.landingFolder || "the configured landing folder"}.`,
       "Ask for human approval before writing to the destination.",
     ].join(" ");
   }
 
   async function requestApproval(echoUser = true) {
+    if (shouldUseLlmRouting()) {
+      await requestApprovalWithLlm(echoUser);
+      return;
+    }
+
     if (echoUser) {
       appendMessages([{ role: "user", text: "Request approval" }]);
     }
@@ -1173,18 +1204,504 @@ export function App() {
     }
   }
 
+  async function showSourceOptionsWithLlm(echoUser = true) {
+    const prompt = [
+      "The user wants to choose the migration source system.",
+      `Available source options: ${sourceOptions
+        .map((option) => `${option.title} - ${option.detail}`)
+        .join("; ")}.`,
+      "Reply as the assistant, keep the setup sequence centered on source selection, and ask the user to choose one option.",
+      "Mention that you can help find connection details if they are unsure.",
+    ].join("\n");
+    const actions: ChatAction[] = [
+      ...optionActions(sourceOptions, "select_source"),
+      { label: "How to find source details", kind: "show_source_help", tone: "secondary" },
+    ];
+
+    if (echoUser) {
+      await sendChatActionToLlm("Source System", prompt, {
+        assistantActions: actions,
+        notice: "Asking the LLM for source options...",
+      });
+      return;
+    }
+
+    await routePrompt(prompt, {
+      assistantActions: actions,
+      notice: "Asking the LLM for source options...",
+    });
+  }
+
+  async function showCloudOptionsWithLlm(echoUser = true) {
+    const prompt = [
+      "The user wants to choose the cloud provider for the migration.",
+      `Available cloud options: ${cloudOptions
+        .map((option) => `${option.title} - ${option.detail}`)
+        .join("; ")}.`,
+      "Reply as the assistant and ask the user to choose the cloud provider.",
+    ].join("\n");
+
+    if (echoUser) {
+      await sendChatActionToLlm("Cloud Provider", prompt, {
+        assistantActions: optionActions(cloudOptions, "select_cloud"),
+        notice: "Asking the LLM for cloud options...",
+      });
+      return;
+    }
+
+    await routePrompt(prompt, {
+      assistantActions: optionActions(cloudOptions, "select_cloud"),
+      notice: "Asking the LLM for cloud options...",
+    });
+  }
+
+  async function showDestinationOptionsWithLlm(echoUser = true) {
+    const prompt = [
+      "The user wants to choose the destination service for the migration landing zone.",
+      `Available destination options: ${destinationOptions
+        .map((option) => `${option.title} - ${option.detail}`)
+        .join("; ")}.`,
+      "Reply as the assistant and ask the user to choose the destination service.",
+      "Keep the details focused on location, credentials, and approval. Do not ask about file formats.",
+    ].join("\n");
+    const actions: ChatAction[] = [
+      ...optionActions(destinationOptions, "select_destination"),
+      { label: "How to find destination details", kind: "show_destination_help" },
+    ];
+
+    if (echoUser) {
+      await sendChatActionToLlm("Destination", prompt, {
+        assistantActions: actions,
+        notice: "Asking the LLM for destination options...",
+      });
+      return;
+    }
+
+    await routePrompt(prompt, {
+      assistantActions: actions,
+      notice: "Asking the LLM for destination options...",
+    });
+  }
+
+  async function selectSourceWithLlm(sourceSystem: SourceSystem, echoUser = true) {
+    const optionTitle = getOptionTitle(sourceOptions, sourceSystem);
+    const nextConfirmed = { ...confirmed, source: true };
+    const actions: ChatAction[] = [
+      { label: "I need help finding these details", kind: "need_help_with_this", value: "source", tone: "primary" },
+      { label: "Use demo source", kind: "use_demo_source", tone: "secondary" },
+      { label: "I have the details, let's proceed", kind: "provide_source_details" },
+    ];
+    const prompt = [
+      `The user selected ${optionTitle} as the migration source.`,
+      "Reply as the assistant. Confirm the selection and explain the source connection details needed next.",
+      "For SAP sources, ask for base URL, client ID, username, password or token, and OData/API scope.",
+      "If they are unsure, offer to help them find the details.",
+    ].join("\n");
+
+    if (echoUser) {
+      await sendChatActionToLlm(optionTitle, prompt, {
+        assistantActions: actions,
+        statePatch: { sourceSystem },
+        confirmedOverride: nextConfirmed,
+        notice: "Asking the LLM for source-detail guidance...",
+      });
+      return;
+    }
+
+    setConfirmed(nextConfirmed);
+    await routePrompt(prompt, {
+      assistantActions: actions,
+      statePatch: { sourceSystem },
+      confirmedOverride: nextConfirmed,
+      notice: "Asking the LLM for source-detail guidance...",
+    });
+  }
+
+  async function selectCloudWithLlm(cloudProvider: CloudProvider, echoUser = true) {
+    const optionTitle = getOptionTitle(cloudOptions, cloudProvider);
+    const nextConfirmed = { ...confirmed, cloud: true };
+    const prompt = [
+      `The user selected ${optionTitle} as the cloud provider.`,
+      "Reply as the assistant. Confirm the selection and ask them to choose the destination service next.",
+      "Keep the sequence short and practical.",
+    ].join("\n");
+
+    if (echoUser) {
+      await sendChatActionToLlm(optionTitle, prompt, {
+        assistantActions: [{ label: "Choose destination", kind: "show_destination_options", tone: "primary" }],
+        statePatch: { cloudProvider },
+        confirmedOverride: nextConfirmed,
+        notice: "Asking the LLM for the next cloud setup step...",
+      });
+      return;
+    }
+
+    setConfirmed(nextConfirmed);
+    await routePrompt(prompt, {
+      assistantActions: [{ label: "Choose destination", kind: "show_destination_options", tone: "primary" }],
+      statePatch: { cloudProvider },
+      confirmedOverride: nextConfirmed,
+      notice: "Asking the LLM for the next cloud setup step...",
+    });
+  }
+
+  async function selectDestinationWithLlm(destination: DestinationWarehouse, echoUser = true) {
+    const optionTitle = getOptionTitle(destinationOptions, destination);
+    const nextConfirmed = { ...confirmed, destination: true };
+    const actions: ChatAction[] = [
+      { label: "I need help finding these details", kind: "need_help_with_this", value: "destination", tone: "primary" },
+      { label: "Use default landing", kind: "use_default_destination", tone: "secondary" },
+      { label: "I have the details, let's proceed", kind: "provide_destination_details" },
+    ];
+    const prompt = [
+      `The user selected ${optionTitle} as the destination service.`,
+      "Reply as the assistant. Confirm the selection and explain the destination details needed next.",
+      "Ask for container, bucket, workspace, landing folder/path, connection credentials, and approval owner as relevant.",
+      "Do not ask the user to choose an output file format.",
+    ].join("\n");
+
+    if (echoUser) {
+      await sendChatActionToLlm(optionTitle, prompt, {
+        assistantActions: actions,
+        statePatch: { destination },
+        confirmedOverride: nextConfirmed,
+        notice: "Asking the LLM for destination-detail guidance...",
+      });
+      return;
+    }
+
+    setConfirmed(nextConfirmed);
+    await routePrompt(prompt, {
+      assistantActions: actions,
+      statePatch: { destination },
+      confirmedOverride: nextConfirmed,
+      notice: "Asking the LLM for destination-detail guidance...",
+    });
+  }
+
+  async function showSourceHelpWithLlm(echoUser = true) {
+    const prompt = [
+      "The user needs help finding source connection details.",
+      `Current source: ${getOptionTitle(sourceOptions, state.sourceSystem)}.`,
+      "Reply as the assistant with practical steps for finding the source URL, client or tenant details, username, and credentials.",
+      "For SAP, include SAP GUI, Basis team, OData/API endpoint, and client ID guidance.",
+    ].join("\n");
+    const actions: ChatAction[] = [
+      { label: "Use demo source for testing", kind: "use_demo_source", tone: "primary" },
+      { label: "I found the details, let's continue", kind: "provide_source_details" },
+      { label: "More help with finding the URL", kind: "guide_source_url" },
+    ];
+
+    if (echoUser) {
+      await sendChatActionToLlm("I need help finding these details", prompt, {
+        assistantActions: actions,
+        notice: "Asking the LLM for source help...",
+      });
+      return;
+    }
+
+    await routePrompt(prompt, {
+      assistantActions: actions,
+      notice: "Asking the LLM for source help...",
+    });
+  }
+
+  async function showDestinationHelpWithLlm(echoUser = true) {
+    const prompt = [
+      "The user needs help finding destination landing details.",
+      `Current cloud: ${getOptionTitle(cloudOptions, state.cloudProvider)}.`,
+      `Current destination: ${getOptionTitle(destinationOptions, state.destination)}.`,
+      "Reply as the assistant with practical steps to find or create the container/bucket/workspace, landing folder/path, and access credentials.",
+      "Do not ask about file formats.",
+    ].join("\n");
+    const actions: ChatAction[] = [
+      { label: "Use default landing for testing", kind: "use_default_destination", tone: "primary" },
+      { label: "I have the details, let's continue", kind: "provide_destination_details" },
+      { label: "More help with storage setup", kind: "guide_destination_storage" },
+    ];
+
+    if (echoUser) {
+      await sendChatActionToLlm("I need help finding these details", prompt, {
+        assistantActions: actions,
+        notice: "Asking the LLM for destination help...",
+      });
+      return;
+    }
+
+    await routePrompt(prompt, {
+      assistantActions: actions,
+      notice: "Asking the LLM for destination help...",
+    });
+  }
+
+  async function handleNeedHelpWithLlm(topic: "source" | "destination", echoUser = true) {
+    if (topic === "source") {
+      await showSourceHelpWithLlm(echoUser);
+      return;
+    }
+
+    await showDestinationHelpWithLlm(echoUser);
+  }
+
+  async function guideSourceUrlWithLlm(echoUser = true) {
+    const prompt = [
+      "The user wants more help finding the SAP source URL.",
+      "Reply as the assistant with detailed but concise methods: SAP GUI connection properties, SAP Basis team questions, company documentation, and common OData/API URL patterns.",
+    ].join("\n");
+    const actions: ChatAction[] = [
+      { label: "Use demo source", kind: "use_demo_source", tone: "primary" },
+      { label: "I have all the details now", kind: "provide_source_details" },
+    ];
+
+    if (echoUser) {
+      await sendChatActionToLlm("More help with finding the URL", prompt, {
+        assistantActions: actions,
+        notice: "Asking the LLM for SAP URL guidance...",
+      });
+      return;
+    }
+
+    await routePrompt(prompt, {
+      assistantActions: actions,
+      notice: "Asking the LLM for SAP URL guidance...",
+    });
+  }
+
+  async function guideDestinationStorageWithLlm(echoUser = true) {
+    const prompt = [
+      "The user wants more help setting up destination storage.",
+      `Cloud: ${getOptionTitle(cloudOptions, state.cloudProvider)}.`,
+      `Destination: ${getOptionTitle(destinationOptions, state.destination)}.`,
+      "Reply as the assistant with step-by-step guidance for finding/creating storage, container or bucket, landing folder/path, and credentials.",
+      "Do not include file format choices.",
+    ].join("\n");
+    const actions: ChatAction[] = [
+      { label: "Use default landing", kind: "use_default_destination", tone: "primary" },
+      { label: "I have all the details now", kind: "provide_destination_details" },
+    ];
+
+    if (echoUser) {
+      await sendChatActionToLlm("More help with storage setup", prompt, {
+        assistantActions: actions,
+        notice: "Asking the LLM for storage setup guidance...",
+      });
+      return;
+    }
+
+    await routePrompt(prompt, {
+      assistantActions: actions,
+      notice: "Asking the LLM for storage setup guidance...",
+    });
+  }
+
+  async function provideSourceDetailsWithLlm(echoUser = true) {
+    const nextConfirmed = { ...confirmed, sourceConnection: true };
+    const prompt = [
+      "The user says they have the source connection details ready.",
+      "Reply as the assistant. Confirm the source connection step and ask them to continue with cloud provider selection if it is not done yet.",
+    ].join("\n");
+
+    if (echoUser) {
+      await sendChatActionToLlm("I have the source details ready", prompt, {
+        assistantActions: [
+          { label: "Choose cloud provider", kind: "show_cloud_options", tone: "primary" },
+          { label: "Use demo source for testing", kind: "use_demo_source" },
+        ],
+        confirmedOverride: nextConfirmed,
+        notice: "Asking the LLM for the next source setup step...",
+      });
+      return;
+    }
+
+    setConfirmed(nextConfirmed);
+    await routePrompt(prompt, {
+      assistantActions: [
+        { label: "Choose cloud provider", kind: "show_cloud_options", tone: "primary" },
+        { label: "Use demo source for testing", kind: "use_demo_source" },
+      ],
+      confirmedOverride: nextConfirmed,
+      notice: "Asking the LLM for the next source setup step...",
+    });
+  }
+
+  async function provideDestinationDetailsWithLlm(echoUser = true) {
+    const nextConfirmed = { ...confirmed, destinationConnection: true };
+    const prompt = [
+      "The user says they have the destination landing details ready.",
+      "Reply as the assistant. Confirm the destination connection step and suggest asking for the SAP table list or scan when they are ready.",
+      "Do not mention file formats.",
+    ].join("\n");
+
+    if (echoUser) {
+      await sendChatActionToLlm("I have the destination details ready", prompt, {
+        assistantActions: [{ label: "Get SAP table list", kind: "run_scan", tone: "primary" }],
+        confirmedOverride: nextConfirmed,
+        notice: "Asking the LLM for the next destination setup step...",
+      });
+      return;
+    }
+
+    setConfirmed(nextConfirmed);
+    await routePrompt(prompt, {
+      assistantActions: [{ label: "Get SAP table list", kind: "run_scan", tone: "primary" }],
+      confirmedOverride: nextConfirmed,
+      notice: "Asking the LLM for the next destination setup step...",
+    });
+  }
+
+  async function useDemoSourceConnectionWithLlm(echoUser = true) {
+    const nextConfirmed = { ...confirmed, sourceConnection: true };
+    const sourceCredentials = {
+      ...state.sourceCredentials,
+      baseUrl: "http://127.0.0.1:8011",
+      username: "demo",
+      password: "demo123",
+      clientId: "100",
+    };
+    const prompt = [
+      "The user chose the demo SAP source connection.",
+      "Demo source saved: base URL http://127.0.0.1:8011, client ID 100, username demo.",
+      "Reply as the assistant and ask them to choose the cloud provider next if needed.",
+    ].join("\n");
+
+    if (echoUser) {
+      await sendChatActionToLlm("Use demo source", prompt, {
+        assistantActions: [{ label: "Choose cloud", kind: "show_cloud_options", tone: "primary" }],
+        statePatch: { sourceCredentials },
+        confirmedOverride: nextConfirmed,
+        notice: "Asking the LLM to confirm the demo source...",
+      });
+      return;
+    }
+
+    setConfirmed(nextConfirmed);
+    await routePrompt(prompt, {
+      assistantActions: [{ label: "Choose cloud", kind: "show_cloud_options", tone: "primary" }],
+      statePatch: { sourceCredentials },
+      confirmedOverride: nextConfirmed,
+      notice: "Asking the LLM to confirm the demo source...",
+    });
+  }
+
+  async function useDefaultDestinationWithLlm(echoUser = true) {
+    const nextConfirmed = { ...confirmed, destinationConnection: true };
+    const destinationCredentials = {
+      ...state.destinationCredentials,
+      containerName: "sap-api",
+      landingFolder: "sap-s4",
+    };
+    const prompt = [
+      "The user chose the default destination landing settings.",
+      "Default landing saved: container sap-api, landing folder sap-s4.",
+      "Reply as the assistant and suggest asking for the SAP table list next.",
+      "Do not mention file formats.",
+    ].join("\n");
+
+    if (echoUser) {
+      await sendChatActionToLlm("Use default landing", prompt, {
+        assistantActions: [{ label: "Get SAP table list", kind: "run_scan", tone: "primary" }],
+        statePatch: { destinationCredentials },
+        confirmedOverride: nextConfirmed,
+        notice: "Asking the LLM to confirm the default landing...",
+      });
+      return;
+    }
+
+    setConfirmed(nextConfirmed);
+    await routePrompt(prompt, {
+      assistantActions: [{ label: "Get SAP table list", kind: "run_scan", tone: "primary" }],
+      statePatch: { destinationCredentials },
+      confirmedOverride: nextConfirmed,
+      notice: "Asking the LLM to confirm the default landing...",
+    });
+  }
+
+  async function testCoreApiWithLlm(echoUser = true) {
+    if (echoUser) {
+      appendMessages([{ role: "user", text: "Test Core API" }]);
+    }
+
+    setBusy(true);
+    setNotice("Checking the core API health endpoint...");
+
+    const ok = await checkCoreHealth();
+    setCoreOnline(ok);
+    setBusy(false);
+
+    if (!ok) {
+      appendMessages([
+        {
+          role: "assistant",
+          text: "Received: Core API is offline. Start the backend server or update VITE_CORE_API_URL.",
+        },
+      ]);
+      setNotice("Core API is not reachable.");
+      return;
+    }
+
+    await routePrompt("The user clicked Test Core API. The health endpoint is reachable. Reply with the current API readiness and next migration step.", {
+      pendingUserText: echoUser ? "Test Core API" : undefined,
+      notice: "Asking the LLM to summarize API readiness...",
+    });
+  }
+
+  async function runScanWithLlm(prompt = "Get SAP table list", echoUser = true) {
+    const llmPrompt = [
+      `The user's request is: ${prompt}`,
+      "If this asks to inspect, list, fetch, scan, or migrate SAP data, use the SAP backend tools/agent to get the table list or relevant SAP data.",
+      "Do not use frontend dummy metadata. Do not ask for an output file format.",
+      "Return the useful table/API names and the next migration step.",
+    ].join("\n");
+
+    if (echoUser) {
+      await sendChatActionToLlm(prompt, llmPrompt, {
+        assistantActions: [{ label: "Request approval", kind: "request_approval", tone: "primary" }],
+        notice: "Asking the LLM for SAP table discovery...",
+      });
+      return;
+    }
+
+    await routePrompt(llmPrompt, {
+      assistantActions: [{ label: "Request approval", kind: "request_approval", tone: "primary" }],
+      notice: "Asking the LLM for SAP table discovery...",
+    });
+  }
+
+  async function requestApprovalWithLlm(echoUser = true) {
+    const prompt =
+      selectedTables.length > 0
+        ? buildMigrationPrompt()
+        : [
+            "The user wants to request approval for the SAP migration.",
+            "Use the current conversation and any SAP table list already discovered by the backend agent.",
+            "If enough table and destination information is available, create the approval-gated backend request.",
+            "If details are missing, ask only for the missing details. Do not ask for file formats.",
+          ].join("\n");
+
+    if (echoUser) {
+      await sendChatActionToLlm("Request approval", prompt, {
+        notice: "Asking the SAP agent to prepare an approval-gated upload...",
+      });
+      return;
+    }
+
+    await routePrompt(prompt, {
+      notice: "Asking the SAP agent to prepare an approval-gated upload...",
+    });
+  }
+
   function openSetupTopic(topic: SetupTopic) {
     if (topic === "source") {
-      showSourceOptions();
+      void showSourceOptionsWithLlm();
       return;
     }
 
     if (topic === "cloud") {
-      showCloudOptions();
+      void showCloudOptionsWithLlm();
       return;
     }
 
-    showDestinationOptions();
+    void showDestinationOptionsWithLlm();
   }
 
   async function handleAction(action: ChatAction) {
@@ -1193,102 +1710,102 @@ export function App() {
     }
 
     if (action.kind === "show_source_options") {
-      showSourceOptions();
+      await showSourceOptionsWithLlm();
       return;
     }
 
     if (action.kind === "show_cloud_options") {
-      showCloudOptions();
+      await showCloudOptionsWithLlm();
       return;
     }
 
     if (action.kind === "show_destination_options") {
-      showDestinationOptions();
+      await showDestinationOptionsWithLlm();
       return;
     }
 
     if (action.kind === "select_source") {
-      selectSource(action.value as SourceSystem);
+      await selectSourceWithLlm(action.value as SourceSystem);
       return;
     }
 
     if (action.kind === "select_cloud") {
-      selectCloud(action.value as CloudProvider);
+      await selectCloudWithLlm(action.value as CloudProvider);
       return;
     }
 
     if (action.kind === "select_destination") {
-      selectDestination(action.value as DestinationWarehouse);
+      await selectDestinationWithLlm(action.value as DestinationWarehouse);
       return;
     }
 
     if (action.kind === "show_source_help") {
-      showSourceHelp();
+      await showSourceHelpWithLlm();
       return;
     }
 
     if (action.kind === "show_destination_help") {
-      showDestinationHelp();
+      await showDestinationHelpWithLlm();
       return;
     }
 
     if (action.kind === "need_help_with_this") {
-      handleNeedHelp(action.value as "source" | "destination");
+      await handleNeedHelpWithLlm(action.value as "source" | "destination");
       return;
     }
 
     if (action.kind === "guide_source_url") {
-      guideSourceUrl();
+      await guideSourceUrlWithLlm();
       return;
     }
 
     if (action.kind === "guide_source_credentials") {
-      showSourceHelp(); // Can be enhanced further with specific credential guidance
+      await showSourceHelpWithLlm();
       return;
     }
 
     if (action.kind === "guide_destination_storage") {
-      guideDestinationStorage();
+      await guideDestinationStorageWithLlm();
       return;
     }
 
     if (action.kind === "guide_destination_credentials") {
-      showDestinationHelp(); // Can be enhanced further with specific credential guidance
+      await showDestinationHelpWithLlm();
       return;
     }
 
     if (action.kind === "provide_source_details") {
-      provideSourceDetails();
+      await provideSourceDetailsWithLlm();
       return;
     }
 
     if (action.kind === "provide_destination_details") {
-      provideDestinationDetails();
+      await provideDestinationDetailsWithLlm();
       return;
     }
 
     if (action.kind === "use_demo_source") {
-      useDemoSourceConnection();
+      await useDemoSourceConnectionWithLlm();
       return;
     }
 
     if (action.kind === "use_default_destination") {
-      useDefaultDestination();
+      await useDefaultDestinationWithLlm();
       return;
     }
 
     if (action.kind === "test_core") {
-      await testCoreApi();
+      await testCoreApiWithLlm();
       return;
     }
 
     if (action.kind === "run_scan") {
-      await runScan();
+      await runScanWithLlm();
       return;
     }
 
     if (action.kind === "request_approval") {
-      await requestApproval();
+      await requestApprovalWithLlm();
       return;
     }
 
@@ -1297,154 +1814,99 @@ export function App() {
       return;
     }
 
-    if (action.kind === "set_format") {
-      setOutputFormat(action.value as OutputFormat);
-    }
   }
 
-  async function routePrompt(prompt: string) {
-    const normalized = prompt.toLowerCase();
+  function buildAgentChatPrompt(prompt: string, options: LlmRouteOptions = {}) {
+    const effectiveState: MigrationState = {
+      ...state,
+      ...options.statePatch,
+    };
+    const effectiveConfirmed = options.confirmedOverride ?? confirmed;
+    const effectiveSelectedTables = effectiveState.scannedTables.filter((table) => table.selected);
+    const selectedTableNames = effectiveSelectedTables.map((table) => table.name).join(", ") || "none";
+    const scannedTableNames = effectiveState.scannedTables.map((table) => table.name).join(", ") || "none";
+    const recentMessages: Array<Pick<ChatMessage, "role" | "text">> = [
+      ...state.chatMessages,
+      ...(options.pendingUserText ? [{ role: "user" as const, text: options.pendingUserText }] : []),
+    ];
+    const recentChat =
+      recentMessages
+        .slice(-8)
+        .map((message) => `${message.role}: ${message.text}`)
+        .join("\n") || "No previous chat in this session.";
 
-    if (normalized === "source" || normalized.includes("choose source")) {
-      showSourceOptions(false);
-      return;
-    }
+    return [
+      "You are responding inside the migration-frontend chat.",
+      "Generate the assistant's next reply from the LLM. Keep the sequence centered on the user's latest prompt and the current setup state.",
+      "Do not ask the user to choose a saved-file representation. Keep storage details focused on location, credentials, and approval.",
+      "Use concise plain language. If a next step is required, state it explicitly.",
+      "Only use SAP data tools when the latest prompt asks to inspect, list, fetch, scan, or migrate SAP data. For setup/help messages, answer with guidance only.",
+      "The latest prompt is the source of truth. Use recent chat only as lightweight context, not as a script to repeat.",
+      [
+        "Current setup:",
+        `- Source: ${getOptionTitle(sourceOptions, effectiveState.sourceSystem)} (${effectiveConfirmed.source ? "confirmed" : "pending"})`,
+        `- Cloud: ${getOptionTitle(cloudOptions, effectiveState.cloudProvider)} (${effectiveConfirmed.cloud ? "confirmed" : "pending"})`,
+        `- Destination: ${getOptionTitle(destinationOptions, effectiveState.destination)} (${effectiveConfirmed.destination ? "confirmed" : "pending"})`,
+        `- Source connection: ${effectiveConfirmed.sourceConnection ? "confirmed" : "pending"}`,
+        `- Destination connection: ${effectiveConfirmed.destinationConnection ? "confirmed" : "pending"}`,
+        `- Scanned tables: ${scannedTableNames}`,
+        `- Selected tables: ${selectedTableNames}`,
+        `- Approval: ${effectiveState.approval ? "pending backend approval" : "none"}`,
+      ].join("\n"),
+      nextRequirement(effectiveConfirmed, "Frontend sequence context:", effectiveState),
+      `Recent chat:\n${recentChat}`,
+      `Latest user prompt:\n${prompt}`,
+    ].join("\n\n");
+  }
 
-    if (normalized === "cloud" || normalized.includes("choose cloud")) {
-      showCloudOptions(false);
-      return;
-    }
+  async function routePrompt(prompt: string, options: LlmRouteOptions = {}) {
+    setBusy(true);
+    setNotice(options.notice ?? "Sending your prompt to the LLM...");
 
-    if (normalized === "destination" || normalized.includes("choose destination")) {
-      showDestinationOptions(false);
-      return;
-    }
+    try {
+      const response = await runSapAgent({ message: buildAgentChatPrompt(prompt, options) });
+      const approvalActions: ChatAction[] | undefined =
+        response.status === "approval_required" && response.approval
+          ? [
+              { label: "Approve", kind: "resolve_approval", value: "approve", tone: "primary" },
+              { label: "Reject", kind: "resolve_approval", value: "reject", tone: "danger" },
+            ]
+          : undefined;
+      const responseActions = approvalActions ?? options.assistantActions;
 
-    if (normalized.includes("source detail") || normalized.includes("source help")) {
-      showSourceHelp(false);
-      return;
-    }
-
-    if (normalized.includes("destination detail") || normalized.includes("destination help")) {
-      showDestinationHelp(false);
-      return;
-    }
-
-    if (normalized.includes("sap ecc")) {
-      selectSource("sap_ecc", false);
-      return;
-    }
-
-    if (normalized.includes("sap s/4") || normalized.includes("s4hana") || normalized.includes("s/4")) {
-      selectSource("sap_s4", false);
-      return;
-    }
-
-    if (normalized.includes("oracle")) {
-      selectSource("oracle", false);
-      return;
-    }
-
-    if (normalized.includes("custom source")) {
-      selectSource("custom", false);
-      return;
-    }
-
-    if (normalized.includes("azure blob") || normalized.includes("blob storage")) {
-      selectDestination("azure_blob", false);
-      return;
-    }
-
-    if (normalized.includes("adls")) {
-      selectDestination("adls_gen2", false);
-      return;
-    }
-
-    if (normalized.includes("synapse")) {
-      selectDestination("synapse", false);
-      return;
-    }
-
-    if (normalized.includes("databricks")) {
-      selectDestination("databricks", false);
-      return;
-    }
-
-    if (normalized.includes("aws")) {
-      selectCloud("aws", false);
-      return;
-    }
-
-    if (normalized.includes("gcp") || normalized.includes("google cloud")) {
-      selectCloud("gcp", false);
-      return;
-    }
-
-    if (normalized.includes("azure")) {
-      selectCloud("azure", false);
-      return;
-    }
-
-    if (normalized.includes("demo")) {
-      useDemoSourceConnection(false);
-      return;
-    }
-
-    if (normalized.includes("default")) {
-      useDefaultDestination(false);
-      return;
-    }
-
-    const requestedFormat = formatOptions.find((format) => normalized.includes(format));
-    if (requestedFormat) {
-      setOutputFormat(requestedFormat, false);
-      return;
-    }
-
-    if (state.approval && normalized.includes("approve")) {
-      await resolveApproval(true, false);
-      return;
-    }
-
-    if (state.approval && (normalized.includes("reject") || normalized.includes("deny"))) {
-      await resolveApproval(false, false);
-      return;
-    }
-
-    if (normalized.includes("approval") || normalized.includes("approve")) {
-      await requestApproval(false);
-      return;
-    }
-
-    if (normalized.includes("health") || normalized.includes("test core") || normalized.includes("test api")) {
-      await testCoreApi(false);
-      return;
-    }
-
-    if (
-      normalized.includes("scan") ||
-      normalized.includes("find") ||
-      normalized.includes("show") ||
-      normalized.includes("table")
-    ) {
-      await runScan(prompt, false);
-      return;
-    }
-
-    appendMessages([
-      {
-        role: "assistant",
-        text: nextRequirement(
-          confirmed,
-          `Received: "${prompt}". I can turn that into a migration step when you choose Source, Cloud, or Destination.`,
-        ),
-        actions: [
-          { label: "Source", kind: "show_source_options" },
-          { label: "Cloud", kind: "show_cloud_options" },
-          { label: "Destination", kind: "show_destination_options" },
+      setState((previous) => ({
+        ...previous,
+        ...options.statePatch,
+        approval: response.approval ?? previous.approval,
+        lastAgentResponse: response,
+        chatMessages: [
+          ...previous.chatMessages,
+          createMessage(
+            "assistant",
+            response.message || "Received: the LLM completed the request without additional details.",
+            responseActions,
+          ),
         ],
-      },
-    ]);
+      }));
+      setNotice(
+        response.status === "approval_required"
+          ? "Approval request created. Review it before upload."
+          : "LLM response received.",
+      );
+    } catch (error) {
+      appendMessages([
+        {
+          role: "assistant",
+          text:
+            error instanceof Error
+              ? `Received: LLM request failed because ${error.message}`
+              : "Received: LLM request failed. Check the API and try again.",
+        },
+      ]);
+      setNotice(error instanceof Error ? error.message : "Unable to reach the LLM.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function submitPrompt(event: FormEvent<HTMLFormElement>) {
@@ -1457,7 +1919,7 @@ export function App() {
 
     setDraft("");
     appendMessages([{ role: "user", text: prompt }]);
-    await routePrompt(prompt);
+    await routePrompt(prompt, { pendingUserText: prompt });
   }
 
   const sourceStatus = confirmed.source ? "Selected" : "Pending";
@@ -1498,7 +1960,7 @@ export function App() {
           <button className="tree-heading expanded" type="button">
             Data Catalog
           </button>
-          <button className="catalog-db-card" type="button" onClick={() => showSourceOptions()}>
+          <button className="catalog-db-card" type="button" onClick={() => void showSourceOptionsWithLlm()}>
             <span className="catalog-db-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" focusable="false">
                 <ellipse cx="12" cy="6" rx="7" ry="3" />
@@ -1515,7 +1977,7 @@ export function App() {
         </section>
 
         <div className="side-footer">
-          <button className="nav-item" type="button" onClick={() => testCoreApi()}>
+          <button className="nav-item" type="button" onClick={() => void testCoreApiWithLlm()}>
             <span>?</span>
             Test API
           </button>

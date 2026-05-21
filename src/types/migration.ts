@@ -10,7 +10,6 @@ export type WizardStep =
 export type SourceSystem = "sap_s4" | "sap_ecc" | "oracle" | "custom";
 export type CloudProvider = "azure" | "aws" | "gcp";
 export type DestinationWarehouse = "azure_blob" | "adls_gen2" | "synapse" | "databricks";
-export type OutputFormat = "parquet" | "json" | "csv";
 
 export interface SourceCredentials {
   baseUrl: string;
@@ -69,7 +68,6 @@ export type ChatActionKind =
   | "run_scan"
   | "request_approval"
   | "resolve_approval"
-  | "set_format"
   | "guide_source_url"
   | "guide_source_credentials"
   | "guide_destination_storage"
@@ -96,7 +94,6 @@ export interface MigrationState {
   sourceSystem: SourceSystem;
   cloudProvider: CloudProvider;
   destination: DestinationWarehouse;
-  outputFormat: OutputFormat;
   sourceCredentials: SourceCredentials;
   destinationCredentials: DestinationCredentials;
   scannedTables: SapTable[];

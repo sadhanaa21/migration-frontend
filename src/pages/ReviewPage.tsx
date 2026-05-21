@@ -35,10 +35,6 @@ export function ReviewPage({
             <dt>Destination</dt>
             <dd>{state.destination.replace(/_/g, " ")} / {state.destinationCredentials.containerName}</dd>
           </div>
-          <div>
-            <dt>Landing format</dt>
-            <dd>{state.outputFormat.toUpperCase()}</dd>
-          </div>
         </dl>
       </div>
 

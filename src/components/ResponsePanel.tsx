@@ -11,7 +11,18 @@ export function ResponsePanel({ response }: ResponsePanelProps) {
         <span>Backend response</span>
         <strong>{response?.status ?? "Waiting"}</strong>
       </div>
-      <pre>{response ? JSON.stringify(response, null, 2) : "No backend response yet."}</pre>
+      {response ? (
+        <div className="response-summary">
+          <p>{response.message || "The backend completed without additional details."}</p>
+          {response.approval && (
+            <small>
+              Approval {response.approval.approval_id} is waiting for {response.approval.tool_name}.
+            </small>
+          )}
+        </div>
+      ) : (
+        <p>No backend response yet.</p>
+      )}
     </section>
   );
 }
