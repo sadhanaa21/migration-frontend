@@ -5,6 +5,8 @@ import {
   createSession,
   sendMessage,
   getSessionStatus,
+  getHistory,
+  listSessions,
   getSources,
   getClouds,
   getPhases,
@@ -16,6 +18,7 @@ import type {
   SourceSystemMeta,
   CloudProviderMeta,
   PhaseInfo,
+  SessionListItem,
 } from "./types/migration";
 import { AppShell } from "./components/AppShell";
 
@@ -23,6 +26,10 @@ const SESSION_KEY = "migration_session_id";
 
 function mkId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function phaseLabel(phase: MigrationPhase): string {
+  return phase.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function App() {
@@ -35,6 +42,8 @@ export function App() {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [coreOnline, setCoreOnline] = useState<boolean | null>(null);
+  const [sessions, setSessions] = useState<SessionListItem[]>([]);
+  const [showSessions, setShowSessions] = useState(false);
 
   // Metadata from backend (no hardcoding)
   const [sources, setSources] = useState<SourceSystemMeta[]>([]);
@@ -62,18 +71,40 @@ export function App() {
 
       if (!ok) return;
 
-      // Re-use existing session from sessionStorage if valid
-      const stored = sessionStorage.getItem(SESSION_KEY);
+      // Load list of all sessions for the switcher
+      listSessions().then(setSessions).catch(() => {});
+
+      // Re-use existing session from localStorage if valid (survives refresh)
+      const stored = localStorage.getItem(SESSION_KEY);
       if (stored) {
         try {
-          const status = await getSessionStatus(stored);
+          const [status, history] = await Promise.all([
+            getSessionStatus(stored),
+            getHistory(stored).catch(() => [] as import("./types/migration").HistoryEntry[]),
+          ]);
           setSessionId(stored);
           setCurrentPhase(status.migration_phase);
           setCompletedPhases(status.completed_phases);
           setPendingApprovals(status.pending_approvals);
+          // Restore conversation from DB history
+          if (history.length > 0) {
+            setMessages(
+              history.map((h) => ({
+                id: mkId(),
+                role: h.role,
+                text: h.content,
+              }))
+            );
+          } else {
+            setMessages([{
+              id: mkId(),
+              role: "assistant",
+              text: `Welcome back! Resuming your migration — currently at **${phaseLabel(status.migration_phase)}** phase. How can I help?`,
+            }]);
+          }
           return;
         } catch {
-          sessionStorage.removeItem(SESSION_KEY);
+          localStorage.removeItem(SESSION_KEY);
         }
       }
 
@@ -81,7 +112,7 @@ export function App() {
       try {
         const res = await createSession();
         setSessionId(res.session_id);
-        sessionStorage.setItem(SESSION_KEY, res.session_id);
+        localStorage.setItem(SESSION_KEY, res.session_id);
         setCurrentPhase(res.migration_phase);
         setMessages([
           {
@@ -91,6 +122,7 @@ export function App() {
             suggestions: sourcesRef.current.map((s) => s.display_name),
           },
         ]);
+        listSessions().then(setSessions).catch(() => {});
       } catch {
         setCoreOnline(false);
       }
@@ -189,6 +221,54 @@ export function App() {
     // Shift+Enter falls through and inserts a newline naturally
   };
 
+  const handleSwitchSession = useCallback(async (sid: string) => {
+    if (sid === sessionId) { setShowSessions(false); return; }
+    setBusy(true);
+    try {
+      const [status, history] = await Promise.all([
+        getSessionStatus(sid),
+        getHistory(sid).catch(() => [] as import("./types/migration").HistoryEntry[]),
+      ]);
+      localStorage.setItem(SESSION_KEY, sid);
+      setSessionId(sid);
+      setCurrentPhase(status.migration_phase);
+      setCompletedPhases(status.completed_phases);
+      setPendingApprovals(status.pending_approvals);
+      setPhaseData({});
+      setMessages(
+        history.length > 0
+          ? history.map((h) => ({ id: mkId(), role: h.role, text: h.content }))
+          : [{ id: mkId(), role: "assistant", text: `Switched to session. Phase: **${phaseLabel(status.migration_phase)}**. How can I help?` }]
+      );
+      setShowSessions(false);
+    } finally {
+      setBusy(false);
+    }
+  }, [sessionId]);
+
+  const handleNewSession = useCallback(async () => {
+    setBusy(true);
+    try {
+      const res = await createSession();
+      localStorage.setItem(SESSION_KEY, res.session_id);
+      setSessionId(res.session_id);
+      setCurrentPhase(res.migration_phase);
+      setCompletedPhases([]);
+      setPendingApprovals([]);
+      setPhaseData({});
+      setMessages([{
+        id: mkId(),
+        role: "assistant",
+        text: "New session started! What source system are you migrating from?",
+        suggestions: sources.map((s) => s.display_name),
+      }]);
+      listSessions().then(setSessions).catch(() => {});
+      setShowSessions(false);
+    } finally {
+      setBusy(false);
+    }
+  }, [sources]);
+
   // Only show suggestions that are short, meaningful quick-replies (not sentences)
   function isUsefulChip(s: string): boolean {
     if (!s || s.length > 30) return false;
@@ -211,6 +291,12 @@ export function App() {
       currentPhaseInfo={currentPhaseInfo}
       sources={sources}
       clouds={clouds}
+      sessions={sessions}
+      activeSessionId={sessionId}
+      showSessions={showSessions}
+      onToggleSessions={() => setShowSessions((v) => !v)}
+      onSwitchSession={(sid) => void handleSwitchSession(sid)}
+      onNewSession={() => void handleNewSession()}
     >
       {/* Chat panel */}
       <div className="chat-panel">

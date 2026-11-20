@@ -102,6 +102,16 @@ export interface PhaseInfo {
   order: number;
 }
 
+// Session list item from GET /sessions
+export interface SessionListItem {
+  session_id: string;
+  migration_phase: MigrationPhase;
+  source_system?: string;
+  cloud_provider?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // Conversation history entry
 export interface HistoryEntry {
   id: number;

@@ -6,6 +6,7 @@ import type {
   CloudProviderMeta,
   PhaseInfo,
   HistoryEntry,
+  SessionListItem,
 } from "../types/migration";
 
 const BASE = "/api";
@@ -42,6 +43,12 @@ export async function createSession(): Promise<SessionCreateResponse> {
   return readJson<SessionCreateResponse>(response);
 }
 
+export async function listSessions(): Promise<SessionListItem[]> {
+  const response = await fetch(`${BASE}/v1/chat/sessions`);
+  const data = await readJson<{ sessions: SessionListItem[] }>(response);
+  return data.sessions ?? [];
+}
+
 export async function sendMessage(
   sessionId: string,
   message: string,
@@ -60,8 +67,9 @@ export async function sendMessage(
 }
 
 export async function getHistory(sessionId: string): Promise<HistoryEntry[]> {
-  const response = await fetch(`${BASE}/v1/chat/${sessionId}/history`);
-  return readJson<HistoryEntry[]>(response);
+  const response = await fetch(`${BASE}/v1/chat/${sessionId}/history?limit=100`);
+  const data = await readJson<{ history: HistoryEntry[] }>(response);
+  return data.history ?? [];
 }
 
 export async function getSessionStatus(

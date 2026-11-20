@@ -4,6 +4,7 @@ import type {
   PhaseInfo,
   SourceSystemMeta,
   CloudProviderMeta,
+  SessionListItem,
 } from "../types/migration";
 
 interface AppShellProps {
@@ -17,6 +18,12 @@ interface AppShellProps {
   currentPhaseInfo?: PhaseInfo;
   sources?: SourceSystemMeta[];
   clouds?: CloudProviderMeta[];
+  sessions?: SessionListItem[];
+  activeSessionId?: string | null;
+  showSessions?: boolean;
+  onToggleSessions?: () => void;
+  onSwitchSession?: (sid: string) => void;
+  onNewSession?: () => void;
 }
 
 export function AppShell({
@@ -30,6 +37,12 @@ export function AppShell({
   currentPhaseInfo,
   sources = [],
   clouds = [],
+  sessions = [],
+  activeSessionId,
+  showSessions = false,
+  onToggleSessions,
+  onSwitchSession,
+  onNewSession,
 }: AppShellProps) {
   const healthClass = coreOnline === null ? "neutral" : coreOnline ? "ok" : "error";
   const healthLabel =
@@ -51,6 +64,54 @@ export function AppShell({
             <strong>Migration Assistant</strong>
             <small>AI-driven data migration</small>
           </div>
+        </div>
+
+        {/* Sessions switcher */}
+        <div className="sessions-block">
+          <div className="sessions-header">
+            <button
+              className="sessions-toggle"
+              type="button"
+              onClick={onToggleSessions}
+              title="Switch between migration sessions"
+            >
+              💬 Chats {sessions.length > 0 ? `(${sessions.length})` : ""}
+              <span className="toggle-caret">{showSessions ? "▲" : "▼"}</span>
+            </button>
+            <button
+              className="new-session-btn"
+              type="button"
+              onClick={onNewSession}
+              title="Start a new migration session"
+              disabled={busy}
+            >
+              +
+            </button>
+          </div>
+          {showSessions && (
+            <ul className="sessions-list">
+              {sessions.map((s) => {
+                const isActive = s.session_id === activeSessionId;
+                const label = s.source_system
+                  ? `${s.source_system.toUpperCase()} → ${s.cloud_provider?.toUpperCase() ?? "?"}`
+                  : `Session ${s.session_id.slice(0, 6)}`;
+                const phase = s.migration_phase.replace(/_/g, " ").toLowerCase();
+                return (
+                  <li key={s.session_id}>
+                    <button
+                      type="button"
+                      className={`session-item${isActive ? " active" : ""}`}
+                      onClick={() => onSwitchSession?.(s.session_id)}
+                      disabled={busy}
+                    >
+                      <span className="session-label">{label}</span>
+                      <span className="session-phase">{phase}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
 
         <nav className="phase-progress" aria-label="Migration phases">
