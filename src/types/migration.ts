@@ -1,103 +1,131 @@
-export type WizardStep =
-  | "welcome"
-  | "source"
-  | "cloud"
-  | "destination"
-  | "review"
-  | "scan"
-  | "approval";
+// Migration phase enum — mirrors backend MigrationPhase
+export type MigrationPhase =
+  | "INIT"
+  | "SOURCE_CONFIGURED"
+  | "CLOUD_SELECTED"
+  | "VAULT_SETUP"
+  | "STORAGE_PROVISIONED"
+  | "METADATA_EXTRACTED"
+  | "DATABRICKS_PROVISIONED"
+  | "NOTEBOOKS_UPLOADED"
+  | "METADATA_LOADED"
+  | "PIPELINE_CONFIGURED"
+  | "ADF_PROVISIONED"
+  | "COMPLETED";
 
-export type SourceSystem = "sap_s4" | "sap_ecc" | "oracle" | "custom";
-export type CloudProvider = "azure" | "aws" | "gcp";
-export type DestinationWarehouse = "azure_blob" | "adls_gen2" | "synapse" | "databricks";
+// Chat status from backend
+export type ChatStatus =
+  | "ok"
+  | "approval_required"
+  | "clarification_required"
+  | "error";
 
-export interface SourceCredentials {
-  baseUrl: string;
-  username: string;
-  password: string;
-  clientId: string;
-}
-
-export interface DestinationCredentials {
-  connectionString: string;
-  accountName: string;
-  accountKey: string;
-  containerName: string;
-  landingFolder: string;
-}
-
-export interface SapTable {
-  id: string;
-  name: string;
-  description: string;
-  module: string;
-  apiPath: string;
-  estimatedRows: number;
-  selected: boolean;
-  destinationPath: string;
-  confidence: number;
-}
-
-export interface AgentApproval {
+// Approval item
+export interface ApprovalItem {
   approval_id: string;
+  summary: string;
   tool_name: string;
   tool_args: Record<string, unknown>;
-  summary: string;
   expires_at: string;
+  cloud_resource_type?: string;
 }
 
-export interface SapAgentResponse {
-  status: "completed" | "approval_required" | "rejected" | "error" | "no_data";
+// Chat API request shape
+export interface ChatRequest {
   message: string;
-  result?: unknown;
-  approval?: AgentApproval | null;
+  approval_id?: string;
+  approve?: boolean;
 }
 
-export type ChatActionKind =
-  | "show_source_options"
-  | "show_cloud_options"
-  | "show_destination_options"
-  | "select_source"
-  | "select_cloud"
-  | "select_destination"
-  | "show_source_help"
-  | "show_destination_help"
-  | "use_demo_source"
-  | "use_default_destination"
-  | "test_core"
-  | "run_scan"
-  | "request_approval"
-  | "resolve_approval"
-  | "guide_source_url"
-  | "guide_source_credentials"
-  | "guide_destination_storage"
-  | "guide_destination_credentials"
-  | "need_help_with_this"
-  | "provide_source_details"
-  | "provide_destination_details";
+// Chat API response shape
+export interface ChatResponse {
+  session_id: string;
+  message: string;
+  status: ChatStatus;
+  migration_phase: MigrationPhase;
+  completed_phases: MigrationPhase[];
+  pending_approvals: ApprovalItem[];
+  suggestions: string[];
+  phase_data: Record<string, unknown>;
+}
 
-export interface ChatAction {
+// Session create response
+export interface SessionCreateResponse {
+  session_id: string;
+  migration_phase: MigrationPhase;
+  created_at: string;
+}
+
+// Session status response
+export interface SessionStatusResponse {
+  session_id: string;
+  migration_phase: MigrationPhase;
+  completed_phases: MigrationPhase[];
+  pending_approvals: ApprovalItem[];
+  source_system?: string;
+  cloud_provider?: string;
+}
+
+// Credential field definition (from backend)
+export interface CredentialField {
+  name: string;
   label: string;
-  kind: ChatActionKind;
-  value?: string;
-  tone?: "primary" | "secondary" | "danger";
+  type: "text" | "password" | "url";
+  required: boolean;
+  placeholder?: string;
 }
 
+// Source system metadata from /v1/sources
+export interface SourceSystemMeta {
+  id: string;
+  display_name: string;
+  icon_key: string;
+  description: string;
+  required_cred_fields: CredentialField[];
+}
+
+// Cloud provider metadata from /v1/clouds
+export interface CloudProviderMeta {
+  id: string;
+  display_name: string;
+  icon_key: string;
+  description: string;
+  secrets_service_name: string;
+  secrets_service_icon: string;
+}
+
+// Phase info from /v1/migration/phases
+export interface PhaseInfo {
+  id: MigrationPhase;
+  display_name: string;
+  description: string;
+  order: number;
+}
+
+// Session list item from GET /sessions
+export interface SessionListItem {
+  session_id: string;
+  migration_phase: MigrationPhase;
+  source_system?: string;
+  cloud_provider?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Conversation history entry
+export interface HistoryEntry {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+}
+
+// UI chat message (includes suggestions from backend)
 export interface ChatMessage {
   id: string;
-  role: "assistant" | "user";
+  role: "user" | "assistant";
   text: string;
-  actions?: ChatAction[];
+  suggestions?: string[];
+  pendingApprovals?: ApprovalItem[];
 }
 
-export interface MigrationState {
-  sourceSystem: SourceSystem;
-  cloudProvider: CloudProvider;
-  destination: DestinationWarehouse;
-  sourceCredentials: SourceCredentials;
-  destinationCredentials: DestinationCredentials;
-  scannedTables: SapTable[];
-  chatMessages: ChatMessage[];
-  approval?: AgentApproval | null;
-  lastAgentResponse?: SapAgentResponse | null;
-}
